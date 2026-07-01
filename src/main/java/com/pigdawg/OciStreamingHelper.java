@@ -46,7 +46,6 @@ import com.oracle.bmc.streaming.responses.UpdateStreamResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -421,11 +420,10 @@ public final class OciStreamingHelper {
 
     public static PutMessagesResponse publishMessage(StreamClient streamClient, String streamId, String value) {
         LOG.debug("Publishing message to streamId={} payload={}", streamId, value);
-        String encodedValue = Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
 
         PutMessagesDetailsEntry entry = PutMessagesDetailsEntry.builder()
                 .key("demo-key".getBytes(StandardCharsets.UTF_8))
-                .value(encodedValue.getBytes(StandardCharsets.UTF_8))
+                .value(value.getBytes(StandardCharsets.UTF_8))
                 .build();
 
         PutMessagesDetails details = PutMessagesDetails.builder()

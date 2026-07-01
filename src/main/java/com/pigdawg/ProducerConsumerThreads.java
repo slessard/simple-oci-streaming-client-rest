@@ -4,6 +4,7 @@ import com.oracle.bmc.streaming.StreamClient;
 import com.oracle.bmc.streaming.model.Message;
 import com.oracle.bmc.streaming.responses.GetMessagesResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,9 +15,12 @@ import org.slf4j.LoggerFactory;
 final class ProducerConsumerThreads {
     private static final Logger LOG = LoggerFactory.getLogger(ProducerConsumerThreads.class);
 
+    private static final Duration CONSUMER_POLL_PAUSE = Duration.ofMillis(200);
+    private static final long PRODUCER_SEND_PAUSE_MS = 200;
+
     private final StreamClient streamClient;
     private final String streamId;
-    private final long producerDeadlineMs;
+    private final int messageCount;
     private final long consumerDeadlineMs;
     private final AtomicInteger producedCount = new AtomicInteger(0);
     private final AtomicInteger consumedCount = new AtomicInteger(0);
@@ -29,12 +33,12 @@ final class ProducerConsumerThreads {
             StreamClient streamClient,
             String streamId,
             String cursor,
-            long producerDeadlineMs,
+            int messageCount,
             long consumerDeadlineMs) {
         this.streamClient = streamClient;
         this.streamId = streamId;
         this.cursor = cursor;
-        this.producerDeadlineMs = producerDeadlineMs;
+        this.messageCount = messageCount;
         this.consumerDeadlineMs = consumerDeadlineMs;
     }
 
@@ -49,6 +53,7 @@ final class ProducerConsumerThreads {
     void throwIfFailed() {
         Exception failure = threadFailure.get();
         if (failure == null) {
+            throwIfMessagesWereNotDrained();
             return;
         }
 
@@ -56,48 +61,48 @@ final class ProducerConsumerThreads {
             throw runtimeException;
         }
 
-        throw new IllegalStateException("Producer/consumer thread failed", failure);
+        throw new IllegalStateException("REST producer/consumer thread failed", failure);
     }
 
     Thread createProducerThread() {
         return new Thread(() -> {
             try {
-                LOG.info("Producer thread started for stream={}", streamId);
-                while (System.currentTimeMillis() < producerDeadlineMs) {
-                    int sequence = producedCount.incrementAndGet();
+                LOG.info("REST producer thread started for stream={}", streamId);
+                for (int sequence = 1; sequence <= messageCount; sequence++) {
                     String payload = "message-" + sequence;
                     OciStreamingHelper.publishMessage(streamClient, streamId, payload);
+                    producedCount.incrementAndGet();
                     LOG.info("Produced: {}", payload);
-                    Thread.sleep(200);
+                    Thread.sleep(PRODUCER_SEND_PAUSE_MS);
                 }
             } catch (Exception ex) {
                 rememberThreadFailure(ex);
-                LOG.error("Producer thread error for stream={}", streamId, ex);
+                LOG.error("REST producer thread error for stream={}", streamId, ex);
             } finally {
                 producerDone.set(true);
-                LOG.info("Producer thread exiting. totalProduced={}", producedCount.get());
+                LOG.info("REST producer thread exiting. totalProduced={}", producedCount.get());
             }
-        }, "stream-producer");
+        }, "rest-producer");
     }
 
     Thread createConsumerThread() {
         return new Thread(() -> {
             try {
-                LOG.info("Consumer thread started for stream={}", streamId);
+                LOG.info("REST consumer thread started for stream={}", streamId);
                 while (System.currentTimeMillis() < consumerDeadlineMs) {
                     GetMessagesResponse response = OciStreamingHelper.getMessages(streamClient, streamId, cursor, 10);
 
                     List<Message> messages = response.getItems();
                     if (messages != null && !messages.isEmpty()) {
-                        LOG.debug("Consumer received {} messages in batch", messages.size());
+                        LOG.debug("REST consumer received {} messages in batch", messages.size());
                         for (Message message : messages) {
                             String value = new String(message.getValue(), StandardCharsets.UTF_8);
                             int totalConsumed = consumedCount.incrementAndGet();
                             LOG.info("Consumed ({}) : {}", totalConsumed, value);
                         }
                     } else {
-                        LOG.debug("Consumer poll returned no messages; sleeping briefly");
-                        Thread.sleep(200);
+                        LOG.debug("REST consumer poll returned no messages");
+                        Thread.sleep(CONSUMER_POLL_PAUSE.toMillis());
                     }
 
                     if (response.getOpcNextCursor() != null && !response.getOpcNextCursor().isEmpty()) {
@@ -111,16 +116,16 @@ final class ProducerConsumerThreads {
 
                 if (producerDone.get() && consumedCount.get() < producedCount.get()) {
                     LOG.warn(
-                            "Consumer reached timeout before full drain. produced={} consumed={}",
+                            "REST consumer reached timeout before full drain. produced={} consumed={}",
                             producedCount.get(),
                             consumedCount.get());
                 }
-                LOG.info("Consumer thread exiting. produced={} consumed={}", producedCount.get(), consumedCount.get());
+                LOG.info("REST consumer thread exiting. produced={} consumed={}", producedCount.get(), consumedCount.get());
             } catch (Exception ex) {
                 rememberThreadFailure(ex);
-                LOG.error("Consumer thread error for stream={}", streamId, ex);
+                LOG.error("REST consumer thread error for stream={}", streamId, ex);
             }
-        }, "stream-consumer");
+        }, "rest-consumer");
     }
 
     private void rememberThreadFailure(Exception failure) {
@@ -132,6 +137,15 @@ final class ProducerConsumerThreads {
 
         if (!threadFailure.compareAndSet(null, failure)) {
             threadFailure.get().addSuppressed(failure);
+        }
+    }
+
+    private void throwIfMessagesWereNotDrained() {
+        int produced = producedCount.get();
+        int consumed = consumedCount.get();
+        if (consumed < produced) {
+            throw new IllegalStateException(
+                    "REST consumer did not drain produced messages. produced=" + produced + " consumed=" + consumed);
         }
     }
 }

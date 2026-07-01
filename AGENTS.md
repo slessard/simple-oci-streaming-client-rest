@@ -8,15 +8,23 @@ These instructions apply to the entire repository.
 
 ## Project Overview
 
-This is a small Java 17 Maven project named `simple-oci-streaming-client`. It demonstrates use of Oracle Cloud Infrastructure (OCI) Streaming by creating a stream pool and stream, producing and consuming messages, and cleaning up the created resources.
+This is a small Java 17 Maven project named `simple-oci-streaming-client-rest`. It demonstrates OCI Streaming through the REST/SDK API.
+
+## Paired Example Consistency
+
+- This repository is paired with `https://github.com/slessard/simple-oci-streaming-client-kafka`.
+- Keep the REST and Kafka examples as similar as possible so readers can compare the two OCI Streaming APIs directly.
+- When behavior is shared, prefer identical names, method order, control flow, logging shape, constants, and helper structure across both repositories.
+- Allow differences only where the REST and Kafka APIs require them, such as cursor handling, Kafka topic creation, client configuration, and stream ID resolution.
+- When changing one repository, inspect the paired repository and make the corresponding change there whenever it applies.
 
 Key files:
 
 - `pom.xml` - Maven build, Java version, dependencies, and `exec-maven-plugin` configuration.
 - `src/main/java/com/pigdawg/ConfigLoader.java` - shared helper for loading `application.properties` and validating required keys.
-- `src/main/java/com/pigdawg/SteamingApp.java` - application entry point that provisions OCI Streaming resources, creates the initial cursor, starts producer/consumer threads, and performs cleanup.
-- `src/main/java/com/pigdawg/ProducerConsumerThreads.java` - encapsulates the producer/consumer thread creation plus the shared deadlines and counters used to coordinate message production and draining.
-- `src/main/java/com/pigdawg/OciStreamingHelper.java` - shared OCI Streaming helper methods for client creation, resource lifecycle operations, cursor creation, message publishing, and polling.
+- `src/main/java/com/pigdawg/SteamingApp.java` - application entry point that provisions a stream pool, creates a stream, creates a cursor, runs producer/consumer threads, and cleans up.
+- `src/main/java/com/pigdawg/ProducerConsumerThreads.java` - REST producer/consumer thread coordination.
+- `src/main/java/com/pigdawg/OciStreamingHelper.java` - OCI helper methods for authentication validation, stream pool lifecycle, stream lifecycle, cursor creation, message publishing, polling, and extra REST utilities used by the repository owner.
 - `src/main/resources/logback.xml` - Logback console logging configuration.
 - `src/main/resources/application.properties` - local OCI configuration; intentionally ignored by Git.
 
@@ -28,27 +36,34 @@ Key files:
 - Prefer safe validation commands that do not create cloud resources:
     - `mvn compile`
     - `mvn test` if tests are added later
-    - `mise exec -- mvn compile` or `mise exec -- mvn test` when using the pinned `mise.toml` toolchain
+    - `mise exec -- mvn compile` or `mise exec -- mvn test` when using the pinned toolchain
 - The app can be launched with `mvn exec:java` when Java is available and `exec-maven-plugin` points to `com.pigdawg.SteamingApp`.
-- Do not run the application unless the user explicitly asks. Running it can create and delete OCI Streaming resources and requires valid local OCI configuration.
+- Do not run the application unless the user explicitly asks. Running it creates and deletes OCI Streaming resources and requires valid local OCI configuration.
 - If Java or Maven is unavailable, report that validation could not be completed rather than installing tools without permission.
+
+## REST-First Boundary
+
+- Use OCI REST/SDK APIs wherever possible for stream and message behavior.
+- Create streams through the OCI REST/SDK `CreateStream` API, not Kafka `CREATE_TOPICS`.
+- Produce and consume through OCI Streaming REST/SDK clients.
+- Keep extra REST utility methods in `OciStreamingHelper` when they are useful to the repository owner, even when the Kafka example has no equivalent.
 
 ## OCI Configuration and Secret Handling
 
-- Never commit `src/main/resources/application.properties`; it is intentionally listed in `.gitignore`.
+- Never commit `src/main/resources/application.properties`; it is intentionally ignored.
 - Treat the following as sensitive and avoid committing, printing, or logging them:
     - OCI session tokens
     - API keys and private keys
     - tenancy/user/fingerprint values when they identify a private environment
     - compartment OCIDs, stream OCIDs, endpoints, or profile names unless the user has explicitly made them public/demo-safe
-- Do not add sample credentials. If an example config is needed, create a sanitized template such as `application.properties.example` with placeholder values only.
-- Do not make changes that broaden cloud permissions, alter authentication behavior, or run destructive OCI operations without explicit user approval.
+- Do not add sample credentials. Example config files must use placeholders only.
+- Do not broaden cloud permissions, alter authentication behavior, or run destructive OCI operations without explicit user approval.
 
 ## Java Code Style
 
 - Keep code under the existing package namespace `com.pigdawg` unless a package rename is explicitly requested.
 - Use Java 17 language features where they improve readability, but avoid unnecessary churn in this small demo project.
-- Prefer clear method extraction for OCI operations, polling/waiting logic, and producer/consumer behavior.
+- Prefer clear method extraction for OCI lifecycle operations, REST client operations, polling/waiting logic, and producer/consumer behavior.
 - Use SLF4J parameterized logging (`LOG.info("value={}", value)`) instead of string concatenation in log statements.
 - Avoid `System.out.println` in application logic; use the existing logger.
 - Do not log secrets, tokens, or raw local configuration values.
@@ -58,7 +73,7 @@ Key files:
 ## Maven Dependency Guidelines
 
 - Keep dependency versions centralized in `<properties>` in `pom.xml`.
-- Avoid adding dependencies for functionality already covered by the JDK or existing libraries.
+- Avoid adding dependencies for functionality already covered by the JDK or OCI SDK modules already in use.
 - If adding OCI SDK modules, use the existing `${oci.sdk.version}` property.
 - Do not upgrade dependency versions casually; explain why an upgrade is needed and validate compatibility.
 
