@@ -220,11 +220,6 @@ public final class OciStreamingHelper {
                 .build());
     }
 
-    public static DeleteStreamPoolResponse deleteStreamPool(StreamAdminClient adminClient, String streamPoolId) {
-        LOG.info("Deleting stream pool via API streamPoolId={}", streamPoolId);
-        return adminClient.deleteStreamPool(DeleteStreamPoolRequest.builder().streamPoolId(streamPoolId).build());
-    }
-
     public static DeleteStreamPoolResponse deleteStreamPoolWhenEmpty(
             StreamAdminClient adminClient,
             String streamPoolId,
@@ -267,17 +262,6 @@ public final class OciStreamingHelper {
                 .build());
     }
 
-    public static UpdateStreamResponse updateStream(StreamAdminClient adminClient, String streamId) {
-        UpdateStreamRequest updateStreamRequest = UpdateStreamRequest.builder()
-                .streamId(streamId)
-                .updateStreamDetails(UpdateStreamDetails.builder()
-                        .freeformTags(ImmutableMap.of("test", "value"))
-                        .build())
-                .build();
-
-        return adminClient.updateStream(updateStreamRequest);
-    }
-
     public static DeleteStreamResponse deleteStream(StreamAdminClient adminClient, String streamId) {
         LOG.info("Deleting stream via API streamId={}", streamId);
         return adminClient.deleteStream(DeleteStreamRequest.builder().streamId(streamId).build());
@@ -288,6 +272,92 @@ public final class OciStreamingHelper {
                 && "InvalidParameter".equals(ex.getServiceCode())
                 && ex.getMessage() != null
                 && ex.getMessage().contains("is not empty");
+    }
+
+    public static void validateAuthenticationToken(
+            String identityEndpoint,
+            String authProfile,
+            String tenancyOcid) throws IOException {
+        LOG.info("Validating authentication token against OCI Identity");
+
+        try (IdentityClient identityClient = createIdentityClient(identityEndpoint, authProfile)) {
+            identityClient.listCompartments(ListCompartmentsRequest.builder()
+                    .compartmentId(tenancyOcid)
+                    .compartmentIdInSubtree(Boolean.FALSE)
+                    .accessLevel(ListCompartmentsRequest.AccessLevel.Accessible)
+                    .limit(1)
+                    .build());
+            LOG.info("Authentication token validation succeeded");
+        }
+    }
+
+    public static CreateGroupCursorResponse createGroupCursor(
+            StreamClient streamClient,
+            String streamId,
+            String groupName,
+            String instanceName) {
+        LOG.info("Creating group cursor. streamId={} groupName={} instanceName={}", streamId, groupName, instanceName);
+        CreateGroupCursorDetails groupCursorDetails = CreateGroupCursorDetails.builder()
+                .groupName(groupName)
+                .instanceName(instanceName)
+                .type(CreateGroupCursorDetails.Type.TrimHorizon)
+                .timeoutInMs(30000)
+                .build();
+
+        CreateGroupCursorResponse groupCursor = streamClient.createGroupCursor(
+                CreateGroupCursorRequest.builder()
+                        .streamId(streamId)
+                        .createGroupCursorDetails(groupCursorDetails)
+                        .build());
+
+        LOG.debug("group cursor created for stream={}", streamId);
+        return groupCursor;
+    }
+
+    public static PutMessagesResponse publishMessage(StreamClient streamClient, String streamId, String value) {
+        LOG.debug("Publishing message to streamId={} payload={}", streamId, value);
+
+        PutMessagesDetailsEntry entry = PutMessagesDetailsEntry.builder()
+                .key("demo-key".getBytes(StandardCharsets.UTF_8))
+                .value(value.getBytes(StandardCharsets.UTF_8))
+                .build();
+
+        PutMessagesDetails details = PutMessagesDetails.builder()
+                .messages(List.of(entry))
+                .build();
+
+        return streamClient.putMessages(
+                PutMessagesRequest.builder()
+                        .streamId(streamId)
+                        .putMessagesDetails(details)
+                        .build());
+    }
+
+    public static GetMessagesResponse getMessages(StreamClient streamClient, String streamId, String cursor, int limit) {
+        return streamClient.getMessages(
+                GetMessagesRequest.builder()
+                        .streamId(streamId)
+                        .cursor(cursor)
+                        .limit(limit)
+                        .build());
+    }
+
+    // Additional utilities for personal use; not required by the sample application.
+
+    public static DeleteStreamPoolResponse deleteStreamPool(StreamAdminClient adminClient, String streamPoolId) {
+        LOG.info("Deleting stream pool via API streamPoolId={}", streamPoolId);
+        return adminClient.deleteStreamPool(DeleteStreamPoolRequest.builder().streamPoolId(streamPoolId).build());
+    }
+
+    public static UpdateStreamResponse updateStream(StreamAdminClient adminClient, String streamId) {
+        UpdateStreamRequest updateStreamRequest = UpdateStreamRequest.builder()
+                .streamId(streamId)
+                .updateStreamDetails(UpdateStreamDetails.builder()
+                        .freeformTags(ImmutableMap.of("test", "value"))
+                        .build())
+                .build();
+
+        return adminClient.updateStream(updateStreamRequest);
     }
 
     public static void deleteStreams(List<StreamSummary> streamSummaries, StreamAdminClient adminClient) {
@@ -361,23 +431,6 @@ public final class OciStreamingHelper {
         }
     }
 
-    public static void validateAuthenticationToken(
-            String identityEndpoint,
-            String authProfile,
-            String tenancyOcid) throws IOException {
-        LOG.info("Validating authentication token against OCI Identity");
-
-        try (IdentityClient identityClient = createIdentityClient(identityEndpoint, authProfile)) {
-            identityClient.listCompartments(ListCompartmentsRequest.builder()
-                    .compartmentId(tenancyOcid)
-                    .compartmentIdInSubtree(Boolean.FALSE)
-                    .accessLevel(ListCompartmentsRequest.AccessLevel.Accessible)
-                    .limit(1)
-                    .build());
-            LOG.info("Authentication token validation succeeded");
-        }
-    }
-
     public static CreateCursorResponse createCursor(StreamClient streamClient, String streamId) {
         LOG.debug("Creating cursor for streamId={}", streamId);
         CreateCursorDetails cursorDetails = CreateCursorDetails.builder()
@@ -395,54 +448,4 @@ public final class OciStreamingHelper {
         return createCursorResponse;
     }
 
-    public static CreateGroupCursorResponse createGroupCursor(
-            StreamClient streamClient,
-            String streamId,
-            String groupName,
-            String instanceName) {
-        LOG.info("Creating group cursor. streamId={} groupName={} instanceName={}", streamId, groupName, instanceName);
-        CreateGroupCursorDetails groupCursorDetails = CreateGroupCursorDetails.builder()
-                .groupName(groupName)
-                .instanceName(instanceName)
-                .type(CreateGroupCursorDetails.Type.TrimHorizon)
-                .timeoutInMs(30000)
-                .build();
-
-        CreateGroupCursorResponse groupCursor = streamClient.createGroupCursor(
-                CreateGroupCursorRequest.builder()
-                        .streamId(streamId)
-                        .createGroupCursorDetails(groupCursorDetails)
-                        .build());
-
-        LOG.debug("group cursor created for stream={}", streamId);
-        return groupCursor;
-    }
-
-    public static PutMessagesResponse publishMessage(StreamClient streamClient, String streamId, String value) {
-        LOG.debug("Publishing message to streamId={} payload={}", streamId, value);
-
-        PutMessagesDetailsEntry entry = PutMessagesDetailsEntry.builder()
-                .key("demo-key".getBytes(StandardCharsets.UTF_8))
-                .value(value.getBytes(StandardCharsets.UTF_8))
-                .build();
-
-        PutMessagesDetails details = PutMessagesDetails.builder()
-                .messages(List.of(entry))
-                .build();
-
-        return streamClient.putMessages(
-                PutMessagesRequest.builder()
-                        .streamId(streamId)
-                        .putMessagesDetails(details)
-                        .build());
-    }
-
-    public static GetMessagesResponse getMessages(StreamClient streamClient, String streamId, String cursor, int limit) {
-        return streamClient.getMessages(
-                GetMessagesRequest.builder()
-                        .streamId(streamId)
-                        .cursor(cursor)
-                        .limit(limit)
-                        .build());
-    }
 }

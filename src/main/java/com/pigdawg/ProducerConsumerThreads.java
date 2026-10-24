@@ -6,9 +6,13 @@ import com.oracle.bmc.streaming.responses.GetMessagesResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +30,7 @@ final class ProducerConsumerThreads {
     private final AtomicInteger consumedCount = new AtomicInteger(0);
     private final AtomicBoolean producerDone = new AtomicBoolean(false);
     private final AtomicReference<Exception> threadFailure = new AtomicReference<>();
+    private final Set<String> consumedMessages = ConcurrentHashMap.newKeySet();
 
     private String cursor;
 
@@ -97,6 +102,7 @@ final class ProducerConsumerThreads {
                         LOG.debug("REST consumer received {} messages in batch", messages.size());
                         for (Message message : messages) {
                             String value = new String(message.getValue(), StandardCharsets.UTF_8);
+                            consumedMessages.add(value);
                             int totalConsumed = consumedCount.incrementAndGet();
                             LOG.info("Consumed ({}) : {}", totalConsumed, value);
                         }
@@ -143,9 +149,19 @@ final class ProducerConsumerThreads {
     private void throwIfMessagesWereNotDrained() {
         int produced = producedCount.get();
         int consumed = consumedCount.get();
-        if (consumed < produced) {
+        Set<String> expectedMessages = expectedMessages();
+        if (consumed < produced || !consumedMessages.equals(expectedMessages)) {
             throw new IllegalStateException(
-                    "REST consumer did not drain produced messages. produced=" + produced + " consumed=" + consumed);
+                    "REST consumer did not drain produced messages. produced=" + produced
+                            + " consumed=" + consumed
+                            + " expectedMessages=" + expectedMessages
+                            + " consumedMessages=" + consumedMessages);
         }
+    }
+
+    private Set<String> expectedMessages() {
+        return IntStream.rangeClosed(1, messageCount)
+                .mapToObj(sequence -> "message-" + sequence)
+                .collect(Collectors.toUnmodifiableSet());
     }
 }

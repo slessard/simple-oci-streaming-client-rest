@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Properties;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,104 +31,107 @@ public class SteamingApp {
     private static final long CONSUMER_TIMEOUT_MS = Duration.ofMinutes(2).toMillis();
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        LOG.info("SteamingApp starting");
-        LocalDateTime now = LocalDateTime.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
-        final String nowString = now.format(formatter);
-
-        final String poolName = String.format("rest-pool-%s", nowString);
-        final String streamName = String.format("rest-stream-%s", nowString);
-        final String consumerGroupName = String.format("rest-consumergroup-%s", nowString);
-        final String cursorName = String.format("rest-cursor-%s", nowString);
-        LOG.info("Generated names pool={} stream={} consumerGroup={} cursor={}", poolName, streamName, consumerGroupName, cursorName);
-
-        OciStreamingHelper.validateAuthenticationToken(ENDPOINT_OCI_IDENTITY, AUTH_PROFILE, TENANT_STREAMING);
-
-        StreamClient streamClient = OciStreamingHelper.createStreamClient(ENDPOINT_OCI_STREAMING, AUTH_PROFILE);
-        StreamAdminClient adminClient = OciStreamingHelper.createStreamAdminClient(ENDPOINT_OCI_STREAMING, AUTH_PROFILE);
-        LOG.info("Initialized StreamClient and StreamAdminClient for endpoint={}", ENDPOINT_OCI_STREAMING);
-
-        CreateStreamPoolResponse createStreamPoolResponse = null;
-        CreateStreamResponse createStreamResponse = null;
-        Exception primaryFailure = null;
         try {
-            LOG.info("Creating stream pool {} in compartment {}", poolName, COMPARTMENT);
-            createStreamPoolResponse = OciStreamingHelper.createStreamPool(adminClient, COMPARTMENT, poolName);
-            String streamPoolId = createStreamPoolResponse.getStreamPool().getId();
-            LOG.info("Created stream pool id={}", streamPoolId);
+            LOG.info("SteamingApp starting");
+            LocalDateTime now = LocalDateTime.now();
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
+            final String runSuffix = now.format(formatter) + "-" + UUID.randomUUID().toString().substring(0, 8);
 
-            OciStreamingHelper.waitForStreamPoolToBecomeActive(adminClient, streamPoolId, RESOURCE_CREATE_TIMEOUT_MS);
+            final String poolName = String.format("rest-pool-%s", runSuffix);
+            final String streamName = String.format("rest-stream-%s", runSuffix);
+            final String consumerGroupName = String.format("rest-consumergroup-%s", runSuffix);
+            final String cursorName = String.format("rest-cursor-%s", runSuffix);
+            LOG.info("Generated names pool={} stream={} consumerGroup={} cursor={}", poolName, streamName, consumerGroupName, cursorName);
 
-            createStreamResponse = OciStreamingHelper.createStream(adminClient, streamPoolId, streamName);
-            String streamId = createStreamResponse.getStream().getId();
-            LOG.info("Created stream id={} in pool={}", streamId, streamPoolId);
+            OciStreamingHelper.validateAuthenticationToken(ENDPOINT_OCI_IDENTITY, AUTH_PROFILE, TENANT_STREAMING);
 
-            OciStreamingHelper.waitForStreamToBecomeActive(adminClient, streamId, RESOURCE_CREATE_TIMEOUT_MS);
+            StreamClient streamClient = OciStreamingHelper.createStreamClient(ENDPOINT_OCI_STREAMING, AUTH_PROFILE);
+            StreamAdminClient adminClient = OciStreamingHelper.createStreamAdminClient(ENDPOINT_OCI_STREAMING, AUTH_PROFILE);
+            LOG.info("Initialized StreamClient for endpoint={}", ENDPOINT_OCI_STREAMING);
+            LOG.info("Initialized StreamAdminClient for endpoint={}", ENDPOINT_OCI_STREAMING);
 
-            final long startMs = System.currentTimeMillis();
-            final long consumerDeadlineMs = startMs + CONSUMER_TIMEOUT_MS;
+            String streamPoolId = null;
+            String streamId = null;
+            Exception primaryFailure = null;
+            try {
+                LOG.info("Creating stream pool {} in compartment {}", poolName, COMPARTMENT);
+                CreateStreamPoolResponse createStreamPoolResponse =
+                        OciStreamingHelper.createStreamPool(adminClient, COMPARTMENT, poolName);
+                streamPoolId = createStreamPoolResponse.getStreamPool().getId();
+                LOG.info("Created stream pool id={}", streamPoolId);
 
-            // A cursor can be created as part of a consumer group.
-            // Committed offsets are managed for the group, and partitions
-            // are dynamically balanced amongst consumers in the group.
-            CreateGroupCursorResponse groupCursorResponse = OciStreamingHelper.createGroupCursor(streamClient, streamId, consumerGroupName, cursorName);
-            String cursor = groupCursorResponse.getCursor().getValue();
-            LOG.debug("Consumer cursor created for stream={}", streamId);
+                OciStreamingHelper.waitForStreamPoolToBecomeActive(adminClient, streamPoolId, RESOURCE_CREATE_TIMEOUT_MS);
 
-            ProducerConsumerThreads producerConsumerThreads =
-                    new ProducerConsumerThreads(
-                            streamClient,
-                            streamId,
-                            cursor,
-                            MESSAGE_COUNT,
-                            consumerDeadlineMs);
-            Thread producerThread = producerConsumerThreads.createProducerThread();
-            Thread consumerThread = producerConsumerThreads.createConsumerThread();
+                CreateStreamResponse createStreamResponse =
+                        OciStreamingHelper.createStream(adminClient, streamPoolId, streamName);
+                streamId = createStreamResponse.getStream().getId();
+                LOG.info("Created stream id={} in pool={}", streamId, streamPoolId);
 
-            LOG.info("Starting REST producer and consumer threads for stream={}", streamId);
-            consumerThread.start();
-            producerThread.start();
-            producerThread.join();
-            consumerThread.join();
-            producerConsumerThreads.throwIfFailed();
-            LOG.info(
-                    "Threads completed. produced={} consumed={}",
-                    producerConsumerThreads.getProducedCount(),
-                    producerConsumerThreads.getConsumedCount());
-        } catch (RuntimeException | InterruptedException ex) {
-            primaryFailure = ex;
-            throw ex;
+                OciStreamingHelper.waitForStreamToBecomeActive(adminClient, streamId, RESOURCE_CREATE_TIMEOUT_MS);
+
+                final long startMs = System.currentTimeMillis();
+                final long consumerDeadlineMs = startMs + CONSUMER_TIMEOUT_MS;
+
+                // A cursor can be created as part of a consumer group.
+                // Committed offsets are managed for the group, and partitions
+                // are dynamically balanced amongst consumers in the group.
+                CreateGroupCursorResponse groupCursorResponse = OciStreamingHelper.createGroupCursor(streamClient, streamId, consumerGroupName, cursorName);
+                String cursor = groupCursorResponse.getCursor().getValue();
+                LOG.debug("Consumer cursor created for stream={}", streamId);
+
+                ProducerConsumerThreads producerConsumerThreads =
+                        new ProducerConsumerThreads(
+                                streamClient,
+                                streamId,
+                                cursor,
+                                MESSAGE_COUNT,
+                                consumerDeadlineMs);
+                Thread producerThread = producerConsumerThreads.createProducerThread();
+                Thread consumerThread = producerConsumerThreads.createConsumerThread();
+
+                LOG.info("Starting REST producer and consumer threads for stream={}", streamId);
+                consumerThread.start();
+                producerThread.start();
+                producerThread.join();
+                consumerThread.join();
+                producerConsumerThreads.throwIfFailed();
+                LOG.info(
+                        "Threads completed. produced={} consumed={}",
+                        producerConsumerThreads.getProducedCount(),
+                        producerConsumerThreads.getConsumedCount());
+            } catch (RuntimeException | InterruptedException ex) {
+                primaryFailure = ex;
+                throw ex;
+            } finally {
+                cleanupResources(adminClient, streamPoolId, streamId, primaryFailure);
+            }
         } finally {
-            cleanupResources(adminClient, createStreamPoolResponse, createStreamResponse, primaryFailure);
+            LOG.info("SteamingApp done");
         }
-
-        LOG.info("SteamingApp done");
     }
 
     private static void cleanupResources(
             StreamAdminClient adminClient,
-            CreateStreamPoolResponse createStreamPoolResponse,
-            CreateStreamResponse createStreamResponse,
+            String streamPoolId,
+            String streamId,
             Exception primaryFailure)
             throws InterruptedException {
         Exception cleanupFailure = null;
-        boolean streamDeleted = createStreamResponse == null;
+        boolean streamDeleted = streamId == null;
 
-        if (createStreamResponse != null) {
-            String streamIdToDelete = createStreamResponse.getStream().getId();
+        if (streamId != null) {
             try {
-                LOG.info("Deleting stream id={}", streamIdToDelete);
-                OciStreamingHelper.deleteStream(adminClient, streamIdToDelete);
-                OciStreamingHelper.waitForStreamToBecomeDeleted(adminClient, streamIdToDelete, RESOURCE_DELETE_TIMEOUT_MS);
+                LOG.info("Deleting stream id={}", streamId);
+                OciStreamingHelper.deleteStream(adminClient, streamId);
+                OciStreamingHelper.waitForStreamToBecomeDeleted(adminClient, streamId, RESOURCE_DELETE_TIMEOUT_MS);
                 streamDeleted = true;
             } catch (RuntimeException | InterruptedException ex) {
                 cleanupFailure = rememberCleanupFailure(primaryFailure, cleanupFailure, ex);
-                LOG.warn("Stream deletion was not confirmed. streamId={}", streamIdToDelete, ex);
+                LOG.warn("Stream deletion was not confirmed. streamId={}", streamId, ex);
             }
         }
 
-        if (createStreamPoolResponse != null) {
-            String streamPoolId = createStreamPoolResponse.getStreamPool().getId();
+        if (streamPoolId != null) {
             if (streamDeleted) {
                 try {
                     LOG.info("Deleting stream pool id={}", streamPoolId);
